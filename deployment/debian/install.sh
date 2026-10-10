@@ -88,13 +88,27 @@ install_deps() {
     [[ "$SKIP_DEPS" == true ]] && { log_info "Skipping dependency installation"; return; }
     
     log_step "Installing system dependencies..."
+    
+    # Detect Python version available
+    PYTHON_VERSION=$(apt-cache search '^python3\.' | grep -E '^python3\.(10|11|12)-venv' | head -1 | cut -d' ' -f1 | sed 's/-venv$//')
+    if [[ -z "$PYTHON_VERSION" ]]; then
+        PYTHON_VERSION="python3"
+    fi
+    log_info "Using Python: $PYTHON_VERSION"
+    
     apt-get update
     apt-get install -y \
-        python3.10 python3.10-venv python3.10-dev python3-pip \
+        $PYTHON_VERSION ${PYTHON_VERSION}-venv ${PYTHON_VERSION}-dev python3-pip \
         nodejs npm git ffmpeg redis-server nginx \
         libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \
         build-essential cmake pkg-config libssl-dev libffi-dev \
         supervisor logrotate curl wget gnupg2 lsb-release
+    
+    # Create python3.10 symlink if using different version
+    if [[ "$PYTHON_VERSION" != "python3.10" ]]; then
+        ln -sf $(which $PYTHON_VERSION) /usr/local/bin/python3.10
+        ln -sf $(which ${PYTHON_VERSION%-dev}) /usr/local/bin/python3.10 2>/dev/null || true
+    fi
     
     if [[ "$ENABLE_GPU" == true ]]; then
         log_step "Installing NVIDIA drivers..."
@@ -139,7 +153,17 @@ install_backend() {
         pip install --upgrade pip setuptools wheel
         cd backend
         pip install -r requirements.txt
-    "
+    " || {
+        log_warn "python3.10 venv failed, trying python3..."
+        sudo -u "$SERVICE_USER" bash -c "
+            cd $INSTALL_DIR
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install --upgrade pip setuptools wheel
+            cd backend
+            pip install -r requirements.txt
+        "
+    }
 }
 
 install_frontend() {
