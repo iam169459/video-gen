@@ -219,3 +219,37 @@ export interface HealthResponse {
 export interface Settings {
   [key: string]: any;
 }
+
+export interface CuratedModel {
+  id: string;
+  name: string;
+  type: string;
+  size: string;
+  desc: string;
+  tags: string[];
+  engine: string[];
+}
+
+export interface CuratedCategory {
+  id: string;
+  name: string;
+  description: string;
+  models: CuratedModel[];
+}
+
+export interface InferenceEngineInfo {
+  id: string;
+  name: string;
+  description: string;
+  available: boolean;
+  gpu_support: boolean;
+  models_loaded: number;
+}
+
+export interface ModelRunResponse {
+  model_id: string;
+  engine: string;
+  response: string;
+  tokens_generated: number;
+  time_taken: number;
+}

@@ -12,6 +12,9 @@ import type {
   ChainStats,
   HealthResponse,
   Settings,
+  CuratedCategory,
+  InferenceEngineInfo,
+  ModelRunResponse,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -206,6 +209,45 @@ class ApiClient {
     const response = await this.client.post("/upload/image", formData, {
       headers: { "Content-Type": "multipart/form-data" },
     });
+    return response.data;
+  }
+
+  async getCuratedModels(): Promise<CuratedCategory[]> {
+    const response = await this.client.get("/models/curated");
+    return response.data;
+  }
+
+  async listInferenceEngines(): Promise<InferenceEngineInfo[]> {
+    const response = await this.client.get("/inference/engines");
+    return response.data;
+  }
+
+  async runModel(modelId: string, engine: string, prompt: string, maxTokens: number = 512, temperature: number = 0.7): Promise<ModelRunResponse> {
+    const response = await this.client.post("/inference/run", {
+      model_id: modelId,
+      engine,
+      prompt,
+      max_tokens: maxTokens,
+      temperature,
+    });
+    return response.data;
+  }
+
+  async runModelStream(modelId: string, engine: string, prompt: string, maxTokens: number = 512, temperature: number = 0.7): Promise<ReadableStream> {
+    const response = await this.client.post("/inference/run/stream", {
+      model_id: modelId,
+      engine,
+      prompt,
+      max_tokens: maxTokens,
+      temperature,
+    }, {
+      responseType: "stream",
+    });
+    return response.data;
+  }
+
+  async getLocalModelInfo(modelId: string): Promise<any> {
+    const response = await this.client.get(`/models/local/${modelId}/info`);
     return response.data;
   }
 }

@@ -16,6 +16,7 @@ from app.services.video_generator import (
 from app.services.download_manager import (
     download_manager, DownloadStatus, ModelType, ModelInfo, DownloadProgress
 )
+from app.services.local_inference import local_inference_manager, InferenceEngine, ModelRunRequest, ModelRunResponse
 from app.services.settings_manager import (
     settings_manager, system_monitor, update_manager,
     UpdateChannel, UpdateStatus, SystemComponent, SystemMetrics, UpdateProgress
@@ -527,3 +528,164 @@ async def upload_image(file: UploadFile = File(...)):
         "format": image.format,
         "base64": img_base64,
     }
+
+
+class CuratedModel(BaseModel):
+    id: str
+    name: str
+    type: str
+    size: str
+    desc: str
+    tags: List[str]
+    engine: List[str]
+
+
+class CuratedCategory(BaseModel):
+    id: str
+    name: str
+    description: str
+    models: List[CuratedModel]
+
+
+class InferenceEngineInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    available: bool
+    gpu_support: bool
+    models_loaded: int
+
+
+class RunModelRequest(BaseModel):
+    model_id: str
+    engine: str
+    prompt: str
+    max_tokens: int = 512
+    temperature: float = 0.7
+    stream: bool = False
+
+
+@router.get("/models/curated", response_model=List[CuratedCategory])
+async def get_curated_models():
+    categories = [
+        CuratedCategory(
+            id="uncensored",
+            name="Uncensored AI",
+            description="Unrestricted models for creative freedom",
+            models=[
+                CuratedModel(id="cognitivecomputations/dolphin-mixtral-8x7b", name="Dolphin Mixtral 8x7B", type="llm", size="26 GB", desc="Uncensored Mixtral fine-tune", tags=["uncensored", "mixtral", "moe"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="cognitivecomputations/dolphin-llama3-8b", name="Dolphin Llama 3 8B", type="llm", size="4.7 GB", desc="Uncensored Llama 3", tags=["uncensored", "llama3"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="EricHartford/WizardLM-30B-Uncensored", name="WizardLM 30B Uncensored", type="llm", size="17 GB", desc="High-quality uncensored", tags=["uncensored", "wizardlm"], engine=["ollama", "llamacpp"]),
+                CuratedModel(id="NVIDIA/Nemotron-3-Ultra", name="Nemotron 3 Ultra", type="llm", size="53 GB", desc="NVIDIA's flagship model", tags=["nvidia", "ultra"], engine=["transformers", "llamacpp"]),
+                CuratedModel(id="teknium/OpenHermes-2.5-Mistral-7B", name="OpenHermes 2.5 7B", type="llm", size="4.1 GB", desc="Uncensored Mistral fine-tune", tags=["uncensored", "hermes"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="alignmentlab/Zephyr-7B-Uncensored", name="Zephyr 7B Uncensored", type="llm", size="4.1 GB", desc="Uncensored chat model", tags=["uncensored", "zephyr"], engine=["ollama", "transformers", "llamacpp"]),
+            ]
+        ),
+        CuratedCategory(
+            id="coding",
+            name="Code & Development",
+            description="Models optimized for programming",
+            models=[
+                CuratedModel(id="codellama/CodeLlama-34b-hf", name="CodeLlama 34B", type="llm", size="19 GB", desc="Meta's code model", tags=["code", "llama"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="deepseek-ai/deepseek-coder-33b-instruct", name="DeepSeek Coder 33B", type="llm", size="18 GB", desc="Top-tier code model", tags=["code", "deepseek"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="bigcode/starcoder2-15b", name="StarCoder2 15B", type="llm", size="8.5 GB", desc="Code generation specialist", tags=["code", "starcoder"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="Qwen/Qwen2.5-Coder-32B", name="Qwen2.5 Coder 32B", type="llm", size="18 GB", desc="Latest Qwen code model", tags=["code", "qwen"], engine=["ollama", "transformers", "llamacpp"]),
+            ]
+        ),
+        CuratedCategory(
+            id="vision",
+            name="Vision & Multimodal",
+            description="Models that understand images",
+            models=[
+                CuratedModel(id="llava-hf/llava-v1.6-34b-hf", name="LLaVA 1.6 34B", type="llm", size="19 GB", desc="State-of-art vision-language", tags=["vision", "llava"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="llava-hf/bakllava-7b-hf", name="BakLLaVA 7B", type="llm", size="4.1 GB", desc="Lightweight vision model", tags=["vision", "bakllava"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="microsoft/Phi-3.5-vision-instruct", name="Phi-3.5 Vision", type="llm", size="2.3 GB", desc="Microsoft's small vision model", tags=["vision", "phi"], engine=["transformers", "llamacpp"]),
+            ]
+        ),
+        CuratedCategory(
+            id="video-gen",
+            name="Video Generation",
+            description="Models for creating videos",
+            models=[
+                CuratedModel(id="stabilityai/stable-video-diffusion-img2vid-xt", name="SVD XT", type="video", size="10 GB", desc="25-frame video from image", tags=["svd", "img2vid"], engine=["diffusers"]),
+                CuratedModel(id="guoyww/animatediff", name="AnimateDiff", type="video", size="6 GB", desc="Text-to-video with motion", tags=["animatediff", "t2v"], engine=["diffusers"]),
+                CuratedModel(id="ByteDance/AnimateDiff-Lightning", name="AnimateDiff Lightning", type="video", size="4 GB", desc="4-step fast video", tags=["animatediff", "fast"], engine=["diffusers"]),
+                CuratedModel(id="hotshot-xl/Hotshot-XL", name="Hotshot-XL", type="video", size="7 GB", desc="GIF-style video generation", tags=["hotshot", "gif"], engine=["diffusers"]),
+            ]
+        ),
+        CuratedCategory(
+            id="general-llm",
+            name="General Purpose LLMs",
+            description="Versatile chat and reasoning models",
+            models=[
+                CuratedModel(id="meta-llama/Meta-Llama-3.1-8B-Instruct", name="Llama 3.1 8B", type="llm", size="4.7 GB", desc="Meta's latest 8B model", tags=["llama3", "meta"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="meta-llama/Meta-Llama-3.1-70B-Instruct", name="Llama 3.1 70B", type="llm", size="40 GB", desc="Meta's flagship 70B", tags=["llama3", "meta", "70b"], engine=["ollama", "llamacpp"]),
+                CuratedModel(id="Qwen/Qwen2.5-72B-Instruct", name="Qwen2.5 72B", type="llm", size="41 GB", desc="Alibaba's powerful model", tags=["qwen", "72b"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="microsoft/Phi-3.5-mini-instruct", name="Phi-3.5 Mini", type="llm", size="2.2 GB", desc="Tiny but capable", tags=["phi", "microsoft", "small"], engine=["ollama", "transformers", "llamacpp"]),
+                CuratedModel(id="google/gemma-2-27b-it", name="Gemma 2 27B", type="llm", size="15 GB", desc="Google's open model", tags=["gemma", "google"], engine=["ollama", "transformers", "llamacpp"]),
+            ]
+        ),
+    ]
+    return categories
+
+
+@router.get("/inference/engines", response_model=List[InferenceEngineInfo])
+async def list_inference_engines():
+    engines = await local_inference_manager.list_engines()
+    return [
+        InferenceEngineInfo(
+            id=e.id,
+            name=e.name,
+            description=e.description,
+            available=e.available,
+            gpu_support=e.gpu_support,
+            models_loaded=e.models_loaded
+        )
+        for e in engines
+    ]
+
+
+@router.post("/inference/run", response_model=ModelRunResponse)
+async def run_model(request: RunModelRequest):
+    try:
+        result = await local_inference_manager.run_model(
+            model_id=request.model_id,
+            engine=request.engine,
+            prompt=request.prompt,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            stream=request.stream
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/inference/run/stream")
+async def run_model_stream(request: RunModelRequest):
+    if not request.stream:
+        request.stream = True
+    
+    async def stream_generator():
+        try:
+            async for chunk in local_inference_manager.run_model_stream(
+                model_id=request.model_id,
+                engine=request.engine,
+                prompt=request.prompt,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature
+            ):
+                yield f"data: {json.dumps({'token': chunk})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+
+@router.get("/models/local/{model_id}/info")
+async def get_local_model_info(model_id: str):
+    info = await local_inference_manager.get_model_info(model_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Model not found locally")
+    return info
