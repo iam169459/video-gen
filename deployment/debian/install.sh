@@ -102,7 +102,7 @@ install_deps() {
         nodejs npm git ffmpeg redis-server nginx \
         libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \
         build-essential cmake pkg-config libssl-dev libffi-dev \
-        supervisor logrotate curl wget gnupg2 lsb-release
+        supervisor logrotate curl wget gnupg2 lsb-release rsync
     
     # Create python3.10 symlink if using different version
     if [[ "$PYTHON_VERSION" != "python3.10" ]]; then
