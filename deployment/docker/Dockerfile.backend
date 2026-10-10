@@ -1,0 +1,49 @@
+# Backend Dockerfile
+FROM nvidia/cuda:12.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3.10-venv \
+    python3.10-dev \
+    git \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    wget \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3.10 /usr/bin/python
+
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+COPY backend/pyproject.toml backend/poetry.lock* ./
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --only=main --no-interaction --no-ansi
+
+COPY backend/app ./app
+
+RUN mkdir -p /app/data/models /app/data/outputs /app/data/temp /app/data/logs /app/data/cache
+
+ENV PYTHONPATH=/app
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

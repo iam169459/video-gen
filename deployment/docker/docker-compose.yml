@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: videogen-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.backend
+    container_name: videogen-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - UPDATE_CHANNEL=${UPDATE_CHANNEL:-stable}
+      - AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED:-false}
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - videogen_data:/app/data
+      - ./models:/app/data/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.frontend
+    container_name: videogen-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8000
+    depends_on:
+      - backend
+
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.backend
+    container_name: videogen-celery-worker
+    restart: unless-stopped
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
+    volumes:
+      - videogen_data:/app/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    depends_on:
+      - redis
+      - backend
+
+  celery-beat:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.backend
+    container_name: videogen-celery-beat
+    restart: unless-stopped
+    command: celery -A app.core.celery_app beat --loglevel=info
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - videogen_data:/app/data
+    depends_on:
+      - redis
+      - backend
+
+  flower:
+    image: mher/flower:2.0
+    container_name: videogen-flower
+    restart: unless-stopped
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_PORT=5555
+    depends_on:
+      - redis
+      - celery-worker
+
+volumes:
+  redis_data:
+  videogen_data:
+
+networks:
+  default:
+    name: videogen-network
