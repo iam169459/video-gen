@@ -112,8 +112,35 @@ install_deps() {
     
     if [[ "$ENABLE_GPU" == true ]]; then
         log_step "Installing NVIDIA drivers..."
-        apt-get install -y nvidia-driver-550 nvidia-container-toolkit 2>/dev/null || \
-        apt-get install -y nvidia-driver nvidia-container-toolkit
+        
+        # Enable non-free and contrib repositories
+        apt-get install -y software-properties-common
+        apt-add-repository -y non-free 2>/dev/null || sed -i 's/main$/main contrib non-free non-free-firmware/' /etc/apt/sources.list
+        apt-add-repository -y contrib 2>/dev/null || true
+        
+        # Add NVIDIA container toolkit repository
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+            tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+        
+        apt-get update
+        
+        # Install NVIDIA driver (try meta-package first, then specific)
+        apt-get install -y nvidia-driver 2>/dev/null || \
+        apt-get install -y nvidia-driver-550 2>/dev/null || \
+        apt-get install -y nvidia-driver-535 2>/dev/null || \
+        log_warn "NVIDIA driver install failed - install manually after reboot"
+        
+        # Install NVIDIA container toolkit
+        apt-get install -y nvidia-container-toolkit 2>/dev/null || \
+        log_warn "nvidia-container-toolkit install failed - install manually"
+        
+        # Configure Docker for GPU (if Docker present)
+        if command -v docker &>/dev/null; then
+            nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+            systemctl restart docker 2>/dev/null || true
+        fi
     fi
     
     if [[ "$ENABLE_OLLAMA" == true ]]; then
