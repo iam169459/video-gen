@@ -14,10 +14,7 @@ INSTALL_DIR="/opt/videogen"
 DATA_DIR="/var/lib/videogen"
 LOG_DIR="/var/log/videogen"
 SERVICE_USER="videogen"
-ENABLE_GPU=false
-ENABLE_OLLAMA=true
-ENABLE_LLAMACPP=true
-AUTO_START=true
+FAST_MODE=false
 SKIP_DEPS=false
 
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -38,6 +35,7 @@ OPTIONS:
     --no-llamacpp          Skip llama.cpp installation
     --no-auto-start        Don't enable auto-start on boot
     --skip-deps            Skip apt package installation
+    --fast                 Fast mode: skip Ollama, llama.cpp, GPU, video gen deps
     -h, --help             Show help
 
 EXAMPLES:
@@ -71,6 +69,7 @@ parse_args() {
             --no-llamacpp) ENABLE_LLAMACPP=false; shift ;;
             --no-auto-start) AUTO_START=false; shift ;;
             --skip-deps) SKIP_DEPS=true; shift ;;
+            --fast) FAST_MODE=true; ENABLE_OLLAMA=false; ENABLE_LLAMACPP=false; shift ;;
             -h|--help) show_help; exit 0 ;;
             *) log_error "Unknown: $1"; show_help; exit 1 ;;
         esac
@@ -96,18 +95,40 @@ install_deps() {
     fi
     log_info "Using Python: $PYTHON_VERSION"
     
-    apt-get update
-    apt-get install -y \
-        $PYTHON_VERSION ${PYTHON_VERSION}-venv ${PYTHON_VERSION}-dev python3-pip \
-        nodejs npm git ffmpeg redis-server nginx \
-        libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \
-        build-essential cmake pkg-config libssl-dev libffi-dev \
-        supervisor logrotate curl wget gnupg2 lsb-release rsync
+    # Use apt-fast if available for parallel downloads
+    if command -v apt-fast &>/dev/null; then
+        APT_CMD="apt-fast"
+    else
+        APT_CMD="apt-get"
+    fi
+    
+    # Fast mode: minimal packages only
+    if [[ "$FAST_MODE" == true ]]; then
+        log_info "Fast mode: installing minimal packages..."
+        $APT_CMD update
+        $APT_CMD install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+            $PYTHON_VERSION ${PYTHON_VERSION}-venv ${PYTHON_VERSION}-dev python3-pip \
+            nodejs npm git redis-server nginx \
+            curl wget gnupg2 lsb-release rsync
+    else
+        $APT_CMD update
+        $APT_CMD install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+            $PYTHON_VERSION ${PYTHON_VERSION}-venv ${PYTHON_VERSION}-dev python3-pip \
+            nodejs npm git ffmpeg redis-server nginx \
+            libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \
+            build-essential cmake pkg-config libssl-dev libffi-dev \
+            supervisor logrotate curl wget gnupg2 lsb-release rsync
+    fi
     
     # Create python3.10 symlink if using different version
     if [[ "$PYTHON_VERSION" != "python3.10" ]]; then
         ln -sf $(which $PYTHON_VERSION) /usr/local/bin/python3.10
         ln -sf $(which ${PYTHON_VERSION%-dev}) /usr/local/bin/python3.10 2>/dev/null || true
+    fi
+    
+    if [[ "$FAST_MODE" == true ]]; then
+        log_info "Fast mode: skipping GPU, Ollama, llama.cpp, video gen dependencies"
+        return
     fi
     
     if [[ "$ENABLE_GPU" == true ]]; then
@@ -173,33 +194,63 @@ copy_project() {
 
 install_backend() {
     log_step "Installing Python backend..."
-    sudo -u "$SERVICE_USER" bash -c "
-        cd $INSTALL_DIR
-        python3.10 -m venv venv
-        source venv/bin/activate
-        pip install --upgrade pip setuptools wheel
-        cd backend
-        pip install -r requirements.txt
-    " || {
-        log_warn "python3.10 venv failed, trying python3..."
+    if [[ "$FAST_MODE" == true ]]; then
+        log_info "Fast mode: using pip cache and minimal deps..."
         sudo -u "$SERVICE_USER" bash -c "
             cd $INSTALL_DIR
-            python3 -m venv venv
+            python3.10 -m venv venv
+            source venv/bin/activate
+            pip install --upgrade pip setuptools wheel --no-cache-dir
+            cd backend
+            pip install -r requirements.txt --no-cache-dir --no-deps 2>/dev/null || pip install -r requirements.txt --no-cache-dir
+        " || {
+            log_warn "python3.10 venv failed, trying python3..."
+            sudo -u "$SERVICE_USER" bash -c "
+                cd $INSTALL_DIR
+                python3 -m venv venv
+                source venv/bin/activate
+                pip install --upgrade pip setuptools wheel --no-cache-dir
+                cd backend
+                pip install -r requirements.txt --no-cache-dir --no-deps 2>/dev/null || pip install -r requirements.txt --no-cache-dir
+            "
+        }
+    else
+        sudo -u "$SERVICE_USER" bash -c "
+            cd $INSTALL_DIR
+            python3.10 -m venv venv
             source venv/bin/activate
             pip install --upgrade pip setuptools wheel
             cd backend
             pip install -r requirements.txt
-        "
-    }
+        " || {
+            log_warn "python3.10 venv failed, trying python3..."
+            sudo -u "$SERVICE_USER" bash -c "
+                cd $INSTALL_DIR
+                python3 -m venv venv
+                source venv/bin/activate
+                pip install --upgrade pip setuptools wheel
+                cd backend
+                pip install -r requirements.txt
+            "
+        }
+    fi
 }
 
 install_frontend() {
     log_step "Building frontend..."
-    sudo -u "$SERVICE_USER" bash -c "
-        cd $INSTALL_DIR/frontend
-        npm ci
-        npm run build
-    "
+    if [[ "$FAST_MODE" == true ]]; then
+        log_info "Fast mode: using npm ci --prefer-offline and skipping build..."
+        sudo -u "$SERVICE_USER" bash -c "
+            cd $INSTALL_DIR/frontend
+            npm ci --prefer-offline --no-audit --no-fund 2>/dev/null || npm ci --no-audit --no-fund
+        "
+    else
+        sudo -u "$SERVICE_USER" bash -c "
+            cd $INSTALL_DIR/frontend
+            npm ci --no-audit --no-fund
+            npm run build
+        "
+    fi
 }
 
 create_env() {
